@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mailseeker"
+version = "0.1.0"
+description = "Email validation and discovery via SMTP recipient check"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "dnspython>=2.4.0",
+]
+
+[project.optional-dependencies]
+proxy = ["PySocks>=1.7.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+mailseeker = "mailseeker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

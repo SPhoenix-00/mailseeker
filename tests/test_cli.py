@@ -1,0 +1,117 @@
+"""Tests for CLI argument parsing."""
+
+from unittest.mock import patch
+
+from mailseeker.cli import _cmd_discover, _cmd_validate, _cmd_diagnose
+from mailseeker.smtp_check import CheckResult
+
+
+def test_validate_cmd_exits_nonzero_on_rejection():
+    with patch("mailseeker.cli.check_email") as mock_check:
+        mock_check.return_value = CheckResult(
+            success=False, code=550, message="User unknown", email="x@y.com"
+        )
+        args = type(
+            "A",
+            (),
+            {
+                "email": "x@y.com",
+                "timeout": 10.0,
+                "mail_from": "",
+                "retries": 1,
+                "retry_delay": 0.1,
+                "retry_backoff": 2.0,
+                "verbose": False,
+            },
+        )()
+        assert _cmd_validate(args) == 1
+
+
+def test_validate_cmd_returns_zero_on_accept():
+    with patch("mailseeker.cli.check_email") as mock_check:
+        mock_check.return_value = CheckResult(
+            success=True, code=250, message="OK", email="x@y.com"
+        )
+        args = type(
+            "A",
+            (),
+            {
+                "email": "x@y.com",
+                "timeout": 10.0,
+                "mail_from": "",
+                "retries": 1,
+                "retry_delay": 0.1,
+                "retry_backoff": 2.0,
+                "verbose": False,
+            },
+        )()
+        assert _cmd_validate(args) == 0
+
+
+def test_discover_cmd_returns_zero_when_found():
+    with patch("mailseeker.cli.discover") as mock_discover:
+        mock_discover.return_value = [
+            CheckResult(
+                success=True,
+                code=250,
+                message="OK",
+                email="jane.doe@example.com",
+            )
+        ]
+        args = type(
+            "A",
+            (),
+            {
+                "first": "Jane",
+                "last": "Doe",
+                "domain": "example.com",
+                "stop_first": True,
+                "delay": 0,
+                "timeout": 10.0,
+                "mail_from": "",
+                "retries": 1,
+                "retry_delay": 0.1,
+                "retry_backoff": 2.0,
+                "verbose": False,
+            },
+        )()
+        assert _cmd_discover(args) == 0
+
+
+def test_discover_cmd_returns_one_when_none_found():
+    with patch("mailseeker.cli.discover") as mock_discover:
+        mock_discover.return_value = []
+        args = type(
+            "A",
+            (),
+            {
+                "first": "Jane",
+                "last": "Doe",
+                "domain": "example.com",
+                "stop_first": True,
+                "delay": 0,
+                "timeout": 10.0,
+                "mail_from": "",
+                "retries": 1,
+                "retry_delay": 0.1,
+                "retry_backoff": 2.0,
+                "verbose": False,
+            },
+        )()
+        assert _cmd_discover(args) == 1
+
+
+def test_diagnose_cmd_runs():
+    with patch("mailseeker.cli.diagnose_network_block") as mock_diag:
+        mock_diag.return_value = "Everything OK"
+        args = type("A", (), {"target": "mx.example.com"})()
+        _cmd_diagnose(args)
+        mock_diag.assert_called_once_with("mx.example.com", proxy_url=None)
+
+
+def test_diagnose_cmd_passes_proxy():
+    with patch("mailseeker.cli.diagnose_network_block") as mock_diag:
+        mock_diag.return_value = "OK"
+        args = type("A", (), {"target": "gmail-smtp-in.l.google.com", "proxy": "socks5h://127.0.0.1:1080"})()
+        _cmd_diagnose(args)
+        mock_diag.assert_called_once_with("gmail-smtp-in.l.google.com", proxy_url="socks5h://127.0.0.1:1080")
