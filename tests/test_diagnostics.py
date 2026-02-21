@@ -6,7 +6,7 @@ from mailseeker.diagnostics import diagnose_network_block, _check_proxy_reachabl
 
 @patch("mailseeker.diagnostics.check_port")
 def test_diagnose_internet_down(mock_check_port):
-    mock_check_port.return_value = False
+    mock_check_port.return_value = (False, "timed out")
 
     msg = diagnose_network_block("mx.example.com")
     assert "No internet connection detected" in msg
@@ -16,10 +16,10 @@ def test_diagnose_internet_down(mock_check_port):
 def test_diagnose_port_25_blocked(mock_check_port):
     def side_effect(host, port, timeout=3.0, proxy_url=None):
         if host in ("8.8.8.8", "google.com"):
-            return True
+            return (True, None)
         if port == 25:
-            return False
-        return False
+            return (False, "timed out")
+        return (False, "timed out")
 
     mock_check_port.side_effect = side_effect
 
@@ -32,8 +32,8 @@ def test_diagnose_port_25_blocked(mock_check_port):
 def test_diagnose_host_specific_block(mock_check_port):
     def side_effect(host, port, timeout=3.0, proxy_url=None):
         if host == "mx.example.com" and port == 25:
-            return False
-        return True
+            return (False, "timed out")
+        return (True, None)
 
     mock_check_port.side_effect = side_effect
 
@@ -59,7 +59,7 @@ def test_diagnose_proxy_unreachable(mock_create_conn):
 @patch("mailseeker.diagnostics._check_proxy_reachable", return_value=(True, "ok"))
 def test_diagnose_proxy_reachable_but_no_internet(mock_proxy_check, mock_check_port):
     """Proxy is reachable but SOCKS5 connections through it fail."""
-    mock_check_port.return_value = False
+    mock_check_port.return_value = (False, "timed out")
 
     msg = diagnose_network_block(
         "mx.example.com", proxy_url="socks5h://127.0.0.1:1080"
@@ -73,10 +73,10 @@ def test_diagnose_proxy_port25_blocked(mock_proxy_check, mock_check_port):
     """Proxy is reachable but port 25 blocked — message mentions the proxy provider."""
     def side_effect(host, port, timeout=3.0, proxy_url=None):
         if host in ("8.8.8.8", "google.com"):
-            return True
+            return (True, None)
         if port == 25:
-            return False
-        return False
+            return (False, "timed out")
+        return (False, "timed out")
 
     mock_check_port.side_effect = side_effect
 

@@ -102,16 +102,18 @@ def test_discover_cmd_returns_one_when_none_found():
 
 
 def test_diagnose_cmd_runs():
+    from unittest.mock import ANY
     with patch("mailseeker.cli.diagnose_network_block") as mock_diag:
         mock_diag.return_value = "Everything OK"
         args = type("A", (), {"target": "mx.example.com"})()
         _cmd_diagnose(args)
-        mock_diag.assert_called_once_with("mx.example.com", proxy_url=None)
+        mock_diag.assert_called_once_with("mx.example.com", proxy_url=None, log=ANY)
 
 
 def test_diagnose_cmd_passes_proxy():
+    from unittest.mock import ANY
     with patch("mailseeker.cli.diagnose_network_block") as mock_diag:
         mock_diag.return_value = "OK"
         args = type("A", (), {"target": "gmail-smtp-in.l.google.com", "proxy": "socks5h://127.0.0.1:1080"})()
         _cmd_diagnose(args)
-        mock_diag.assert_called_once_with("gmail-smtp-in.l.google.com", proxy_url="socks5h://127.0.0.1:1080")
+        mock_diag.assert_called_once_with("gmail-smtp-in.l.google.com", proxy_url="socks5h://127.0.0.1:1080", log=ANY)

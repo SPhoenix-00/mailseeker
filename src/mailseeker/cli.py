@@ -15,8 +15,13 @@ def _proxy_from_args(args: argparse.Namespace) -> str | None:
 
 
 def _cmd_diagnose(args: argparse.Namespace) -> int:
+    proxy = _proxy_from_args(args)
     print(f"Running network diagnosis for target: {args.target}")
-    diagnosis = diagnose_network_block(args.target, proxy_url=_proxy_from_args(args))
+    if proxy:
+        print(f"Proxy: {proxy}")
+    print()
+    diagnosis = diagnose_network_block(args.target, proxy_url=proxy, log=print)
+    print()
     print(diagnosis)
     return 0
 
