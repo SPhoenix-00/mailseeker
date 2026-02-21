@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mailseeker.smtp_check import (
+    AcceptedStatus,
+    CheckResult,
+    ResultCategory,
     check_email,
+    classify_result,
     get_mx_hosts,
     interpret_code,
 )
@@ -26,6 +30,45 @@ def test_get_mx_hosts_no_answer_raises(mock_resolve):
 def test_interpret_code():
     assert interpret_code(550) == "User unknown or mailbox unavailable"
     assert interpret_code(999) is None
+
+
+def test_classify_result():
+    """Result categories: Accepted (Valid/Limited), Rejected, Unverifiable."""
+    cat, status, reason = classify_result(
+        CheckResult(success=True, code=250, message="OK", email="x@y.com")
+    )
+    assert cat is ResultCategory.ACCEPTED
+    assert status is AcceptedStatus.VALID
+    assert reason is None
+
+    cat, status, reason = classify_result(
+        CheckResult(success=False, code=552, message="Mailbox full", email="x@y.com")
+    )
+    assert cat is ResultCategory.ACCEPTED
+    assert status is AcceptedStatus.LIMITED
+    assert reason is None
+
+    cat, status, reason = classify_result(
+        CheckResult(success=False, code=550, message="User unknown", email="x@y.com")
+    )
+    assert cat is ResultCategory.REJECTED
+    assert status is None
+    assert reason is None
+
+    cat, status, reason = classify_result(
+        CheckResult(success=False, code=0, message="Network timeout", email="x@y.com")
+    )
+    assert cat is ResultCategory.UNVERIFIABLE
+    assert status is None
+    assert "timeout" in (reason or "")
+
+    cat, status, reason = classify_result(
+        CheckResult(success=True, code=250, message="OK", email="x@y.com"),
+        unverifiable_reason="Domain configured as catch-all",
+    )
+    assert cat is ResultCategory.UNVERIFIABLE
+    assert status is None
+    assert reason == "Domain configured as catch-all"
 
 
 def test_check_email_invalid_format():

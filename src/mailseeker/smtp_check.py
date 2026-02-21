@@ -4,6 +4,7 @@ import sys
 import smtplib
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from .diagnostics import diagnose_network_block
@@ -37,6 +38,21 @@ except ImportError:
     dns = None  # type: ignore[assignment]
 
 
+class ResultCategory(str, Enum):
+    """High-level result: Accepted, Rejected, or Unverifiable."""
+
+    ACCEPTED = "Accepted"
+    REJECTED = "Rejected"
+    UNVERIFIABLE = "Unverifiable"
+
+
+class AcceptedStatus(str, Enum):
+    """When category is Accepted: Valid (normal) or Limited (mailbox overloaded)."""
+
+    VALID = "Valid"
+    LIMITED = "Limited"
+
+
 @dataclass
 class CheckResult:
     """Result of an SMTP recipient check."""
@@ -47,6 +63,13 @@ class CheckResult:
     email: str
 
 
+# SMTP codes that mean "accepted, valid"
+_ACCEPTED_VALID_CODES = (250, 251, 252)
+# SMTP codes that mean "accepted but limited" (mailbox full / overloaded / storage)
+_ACCEPTED_LIMITED_CODES = (450, 451, 452, 552)
+# SMTP codes that mean "rejected" (address does not exist or not allowed)
+_REJECTED_CODES = (550, 551, 553, 554)
+
 # Common SMTP response code interpretations (short human-readable).
 CODE_INTERPRETATIONS = {
     550: "User unknown or mailbox unavailable",
@@ -55,6 +78,42 @@ CODE_INTERPRETATIONS = {
     553: "Mailbox name invalid or not allowed",
     554: "Transaction failed / policy rejection",
 }
+
+
+def classify_result(
+    result: CheckResult,
+    *,
+    unverifiable_reason: Optional[str] = None,
+) -> tuple[ResultCategory, Optional[AcceptedStatus], Optional[str]]:
+    """
+    Classify a check result into category (Accepted / Rejected / Unverifiable),
+    optional accepted status (Valid / Limited), and optional reason (for Unverifiable).
+
+    Unverifiable covers: no SMTP response (timeout, connection error), catch-all,
+    or server issues (e.g. anti-spam blocking verification).
+    """
+    if unverifiable_reason:
+        return (ResultCategory.UNVERIFIABLE, None, unverifiable_reason)
+    code = result.code
+    if code in _ACCEPTED_VALID_CODES:
+        return (ResultCategory.ACCEPTED, AcceptedStatus.VALID, None)
+    if code in _ACCEPTED_LIMITED_CODES:
+        return (ResultCategory.ACCEPTED, AcceptedStatus.LIMITED, None)
+    if code in _REJECTED_CODES:
+        return (ResultCategory.REJECTED, None, None)
+    if code == 0:
+        # No SMTP response: timeout, connection error, no MX, etc.
+        reason = result.message or "Mail server did not respond"
+        return (ResultCategory.UNVERIFIABLE, None, reason)
+    # Other 4xx: transient (e.g. anti-spam)
+    if 400 <= code < 500:
+        return (
+            ResultCategory.UNVERIFIABLE,
+            None,
+            result.message or f"Server returned {code} (transient)",
+        )
+    # Other 5xx: permanent failure → Rejected
+    return (ResultCategory.REJECTED, None, None)
 
 
 def get_mx_hosts(

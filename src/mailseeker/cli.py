@@ -5,12 +5,22 @@ import os
 import sys
 
 from .discovery import discover, email_candidates
-from .smtp_check import check_email, interpret_code
+from .smtp_check import (
+    AcceptedStatus,
+    CheckResult,
+    ResultCategory,
+    check_email,
+    classify_result,
+    interpret_code,
+)
 from .diagnostics import diagnose_network_block
 
 # Output formatting
 _WIDTH = 60
 _HR = "\u2500" * _WIDTH  # horizontal rule
+
+# Catch-all: if server accepts this many candidates (or more) and all accepted, treat as inconclusive
+_CATCH_ALL_MIN_CANDIDATES = 3
 
 
 def _section(title: str) -> None:
@@ -57,35 +67,60 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         verbose=args.verbose,
         proxy_url=_proxy_from_args(args),
     )
+    category, status, unverifiable_reason = classify_result(result)
     if args.verbose:
         _section("Result")
         _line("Email", result.email)
-        _line("Accepted", "Yes" if result.success else "No")
+        _line("Category", category.value)
+        if status is not None:
+            _line("Status", status.value)
         if result.code:
             _line("Code", str(result.code))
             _line("Message", result.message or "—")
-        if result.code and not result.success:
+        if category is ResultCategory.REJECTED and result.code:
             interp = interpret_code(result.code)
             if interp:
                 _line("Interpretation", interp)
+        if category is ResultCategory.UNVERIFIABLE and unverifiable_reason:
+            _line("Reason", unverifiable_reason)
         _section("Conclusion")
-        if result.success:
-            print(f"  The address is accepted (server replied {result.code}).", file=sys.stderr)
-        elif result.code:
-            print(f"  The address was rejected (server replied {result.code}).", file=sys.stderr)
+        if category is ResultCategory.ACCEPTED:
+            if status is AcceptedStatus.LIMITED:
+                print(
+                    "  Accepted (Limited): address is valid but mailbox is temporarily"
+                    " overloaded (storage or rate limit).",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"  Accepted (Valid): the address is valid (server replied {result.code}).",
+                    file=sys.stderr,
+                )
+        elif category is ResultCategory.REJECTED:
+            print(
+                "  Rejected: the address does not exist or no mail server for the domain.",
+                file=sys.stderr,
+            )
         else:
-            print(f"  Could not reach mail server: {result.message}", file=sys.stderr)
+            print(
+                f"  Unverifiable: {unverifiable_reason or result.message}",
+                file=sys.stderr,
+            )
         print(file=sys.stderr)
     else:
         print(f"Email: {result.email}")
-        print(f"Accepted: {result.success}")
+        print(f"Category: {category.value}")
+        if status is not None:
+            print(f"Status: {status.value}")
         print(f"Code: {result.code}")
         print(f"Message: {result.message}")
-        if result.code and not result.success:
+        if category is ResultCategory.REJECTED and result.code:
             interp = interpret_code(result.code)
             if interp:
                 print(f"Interpretation: {interp}")
-    return 0 if result.success else 1
+        if category is ResultCategory.UNVERIFIABLE and unverifiable_reason:
+            print(f"Reason: {unverifiable_reason}")
+    return 0 if category is ResultCategory.ACCEPTED else 1
 
 
 def _cmd_discover(args: argparse.Namespace) -> int:
@@ -110,37 +145,122 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         verbose=args.verbose,
         proxy_url=_proxy_from_args(args),
     )
-    accepted = [r for r in results if r.success]
-    rejected = [r for r in results if not r.success and r.code != 0]
-    errors = [r for r in results if not r.success and r.code == 0]
+    # Classify each result; catch-all overrides accepted → Unverifiable
+    n_tried = len(results)
+    n_total = len(candidates)
+    possible_catch_all = (
+        n_tried >= _CATCH_ALL_MIN_CANDIDATES
+        and all(r.success for r in results)
+        and n_tried > 0
+    )
+    accepted_valid: list[CheckResult] = []
+    accepted_limited: list[CheckResult] = []
+    rejected: list[CheckResult] = []
+    unverifiable: list[tuple[CheckResult, str]] = []  # (result, reason)
+
+    for r in results:
+        if possible_catch_all and r.success:
+            unverifiable.append((
+                r,
+                "Domain configured as catch-all; accepts all addresses (confidentiality risk).",
+            ))
+            continue
+        cat, status, reason = classify_result(r)
+        if cat is ResultCategory.ACCEPTED:
+            if status is AcceptedStatus.LIMITED:
+                accepted_limited.append(r)
+            else:
+                accepted_valid.append(r)
+        elif cat is ResultCategory.REJECTED:
+            rejected.append(r)
+        else:
+            unverifiable.append((r, reason or "Mail server did not respond"))
+
+    n_acc_valid = len(accepted_valid)
+    n_acc_limited = len(accepted_limited)
+    n_rej = len(rejected)
+    n_unv = len(unverifiable)
+    accepted_any = accepted_valid or accepted_limited
+
     if args.verbose:
-        _section("Accepted")
-        if accepted:
-            for i, r in enumerate(accepted, 1):
+        _section("Accepted (Valid)")
+        if accepted_valid:
+            for i, r in enumerate(accepted_valid, 1):
                 print(f"  #{i}  {r.email}  ({r.code} {r.message})", file=sys.stderr)
         else:
             print("  None.", file=sys.stderr)
+        _section("Accepted (Limited)")
+        if accepted_limited:
+            print(
+                "  Mailbox temporarily overloaded (storage or rate limit); address valid.",
+                file=sys.stderr,
+            )
+            for i, r in enumerate(accepted_limited, 1):
+                print(f"  #{i}  {r.email}  ({r.code} {r.message})", file=sys.stderr)
+        else:
+            print("  None.", file=sys.stderr)
+        _section("Rejected")
+        if rejected:
+            for i, r in enumerate(rejected, 1):
+                print(f"  #{i}  {r.email}  ({r.code} {r.message})", file=sys.stderr)
+        else:
+            print("  None.", file=sys.stderr)
+        _section("Unverifiable")
+        if unverifiable:
+            if possible_catch_all:
+                print(
+                    "  Domain is catch-all; cannot determine which addresses exist.",
+                    file=sys.stderr,
+                )
+            for i, (r, reason) in enumerate(unverifiable[:5], 1):
+                print(f"  #{i}  {r.email}  — {reason}", file=sys.stderr)
+            if len(unverifiable) > 5:
+                print(f"  ... and {len(unverifiable) - 5} more.", file=sys.stderr)
+        else:
+            print("  None.", file=sys.stderr)
         _section("Conclusion")
-        n_tried = len(results)
-        n_total = len(candidates)
-        n_acc, n_rej, n_err = len(accepted), len(rejected), len(errors)
         parts = []
-        if n_acc:
-            parts.append(f"{n_acc} accepted")
+        if n_acc_valid:
+            parts.append(f"{n_acc_valid} accepted (Valid)")
+        if n_acc_limited:
+            parts.append(f"{n_acc_limited} accepted (Limited)")
         if n_rej:
             parts.append(f"{n_rej} rejected")
-        if n_err:
-            parts.append(f"{n_err} error(s)")
+        if n_unv:
+            parts.append(f"{n_unv} unverifiable")
         tried_label = f"{n_tried}/{n_total}" if n_tried < n_total else str(n_total)
         print(f"  {tried_label} tried: {', '.join(parts) or 'no outcome'}.", file=sys.stderr)
-        if accepted:
-            best = accepted[0].email
-            print(f"  Best guess: {best}", file=sys.stderr)
+        if accepted_any:
+            best = accepted_any[0].email
+            if possible_catch_all:
+                print(
+                    "  Best guess (Unverifiable — domain may be catch-all): " + best,
+                    file=sys.stderr,
+                )
+            else:
+                print(f"  Best guess: {best}", file=sys.stderr)
+        elif possible_catch_all and unverifiable:
+            best = unverifiable[0][0].email
+            print(
+                "  Best guess (Unverifiable — domain may be catch-all): " + best,
+                file=sys.stderr,
+            )
         print(file=sys.stderr)
     else:
-        for r in accepted:
-            print(f"{r.email}  ({r.code} {r.message})")
-    if not accepted:
+        if possible_catch_all:
+            print(
+                "Unverifiable: domain configured as catch-all; result inconclusive.",
+                file=sys.stderr,
+            )
+            if unverifiable:
+                r = unverifiable[0][0]
+                print(f"{r.email}  (Unverifiable)")
+        else:
+            for r in accepted_valid:
+                print(f"{r.email}  Accepted (Valid)  ({r.code} {r.message})")
+            for r in accepted_limited:
+                print(f"{r.email}  Accepted (Limited)  ({r.code} {r.message})")
+    if not accepted_any and not (possible_catch_all and unverifiable):
         if not args.verbose:
             print("No accepted address found.", file=sys.stderr)
         return 1
