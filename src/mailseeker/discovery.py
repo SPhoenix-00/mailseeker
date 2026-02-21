@@ -101,7 +101,7 @@ def discover(
     last: str,
     domain: str,
     *,
-    stop_at_first: bool = True,
+    stop_at_first: bool = False,
     delay: float = 0,
     timeout: float = 10.0,
     mail_from: str = "",
@@ -112,19 +112,17 @@ def discover(
     proxy_url: Optional[str] = None,
 ) -> list[CheckResult]:
     """
-    Try each candidate email in order; return accepted result(s).
-    If stop_at_first is True, return as soon as one is accepted; otherwise try all.
+    Try each candidate email in order; return all results (accepted and rejected).
+    If stop_at_first is True, stop trying after the first accepted address (still returns all tried so far).
     delay is seconds to wait between attempts (0 = no delay).
+    When verbose is True, progress is shown as one line per candidate; SMTP details are not shown per candidate.
     """
     candidates = email_candidates(first, last, domain)
-    if verbose:
-        print(f"Generated {len(candidates)} candidate(s) for {first} {last} @ {domain}", file=sys.stderr)
+    total = len(candidates)
     results: list[CheckResult] = []
     for i, email in enumerate(candidates):
         if delay and i > 0:
             time.sleep(delay)
-        if verbose:
-            print(f"Trying {i + 1}/{len(candidates)}: {email}", file=sys.stderr)
         result = check_email(
             email,
             timeout=timeout,
@@ -132,11 +130,16 @@ def discover(
             retries=retries,
             retry_delay=retry_delay,
             retry_backoff=retry_backoff,
-            verbose=verbose,
+            verbose=False,  # keep discover output compact; no per-candidate SMTP dump
             proxy_url=proxy_url,
         )
-        if result.success:
-            results.append(result)
-            if stop_at_first:
-                break
+        results.append(result)
+        if verbose:
+            status = "\u2713" if result.success else "\u2717"  # ✓ / ✗
+            short_msg = (result.message or "")[:48]
+            if len((result.message or "")) > 48:
+                short_msg += "..."
+            print(f"  {i + 1:>{len(str(total))}}/{total}  {email:<40}  {status}  {result.code}  {short_msg}", file=sys.stderr)
+        if result.success and stop_at_first:
+            break
     return results

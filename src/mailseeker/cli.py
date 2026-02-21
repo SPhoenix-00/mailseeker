@@ -4,9 +4,23 @@ import argparse
 import os
 import sys
 
-from .discovery import discover
+from .discovery import discover, email_candidates
 from .smtp_check import check_email, interpret_code
 from .diagnostics import diagnose_network_block
+
+# Output formatting
+_WIDTH = 60
+_HR = "\u2500" * _WIDTH  # horizontal rule
+
+
+def _section(title: str) -> None:
+    print(file=sys.stderr)
+    print(f"  {title}", file=sys.stderr)
+    print(f"  {_HR}", file=sys.stderr)
+
+
+def _line(key: str, value: str, key_width: int = 12) -> None:
+    print(f"  {key:<{key_width}}  {value}", file=sys.stderr)
 
 
 def _proxy_from_args(args: argparse.Namespace) -> str | None:
@@ -27,6 +41,12 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
+    email = (args.email or "").strip().lower()
+    if args.verbose:
+        print(file=sys.stderr)
+        print(f"  Validate  {email}", file=sys.stderr)
+        print(f"  {_HR}", file=sys.stderr)
+        print(file=sys.stderr)
     result = check_email(
         args.email,
         timeout=args.timeout,
@@ -37,18 +57,45 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         verbose=args.verbose,
         proxy_url=_proxy_from_args(args),
     )
-    print(f"Email: {result.email}")
-    print(f"Accepted: {result.success}")
-    print(f"Code: {result.code}")
-    print(f"Message: {result.message}")
-    if result.code and not result.success:
-        interp = interpret_code(result.code)
-        if interp:
-            print(f"Interpretation: {interp}")
+    if args.verbose:
+        _section("Result")
+        _line("Email", result.email)
+        _line("Accepted", "Yes" if result.success else "No")
+        if result.code:
+            _line("Code", str(result.code))
+            _line("Message", result.message or "—")
+        if result.code and not result.success:
+            interp = interpret_code(result.code)
+            if interp:
+                _line("Interpretation", interp)
+        _section("Conclusion")
+        if result.success:
+            print(f"  The address is accepted (server replied {result.code}).", file=sys.stderr)
+        elif result.code:
+            print(f"  The address was rejected (server replied {result.code}).", file=sys.stderr)
+        else:
+            print(f"  Could not reach mail server: {result.message}", file=sys.stderr)
+        print(file=sys.stderr)
+    else:
+        print(f"Email: {result.email}")
+        print(f"Accepted: {result.success}")
+        print(f"Code: {result.code}")
+        print(f"Message: {result.message}")
+        if result.code and not result.success:
+            interp = interpret_code(result.code)
+            if interp:
+                print(f"Interpretation: {interp}")
     return 0 if result.success else 1
 
 
 def _cmd_discover(args: argparse.Namespace) -> int:
+    candidates = email_candidates(args.first, args.last, args.domain)
+    if args.verbose:
+        print(file=sys.stderr)
+        print(f"  Discover  {args.first} {args.last}  @  {args.domain}", file=sys.stderr)
+        print(f"  {_HR}", file=sys.stderr)
+        _line("Candidates", f"{len(candidates)} pattern(s)")
+        print(file=sys.stderr)
     results = discover(
         args.first,
         args.last,
@@ -63,11 +110,40 @@ def _cmd_discover(args: argparse.Namespace) -> int:
         verbose=args.verbose,
         proxy_url=_proxy_from_args(args),
     )
-    if not results:
-        print("No accepted address found.", file=sys.stderr)
+    accepted = [r for r in results if r.success]
+    rejected = [r for r in results if not r.success and r.code != 0]
+    errors = [r for r in results if not r.success and r.code == 0]
+    if args.verbose:
+        _section("Accepted")
+        if accepted:
+            for i, r in enumerate(accepted, 1):
+                print(f"  #{i}  {r.email}  ({r.code} {r.message})", file=sys.stderr)
+        else:
+            print("  None.", file=sys.stderr)
+        _section("Conclusion")
+        n_tried = len(results)
+        n_total = len(candidates)
+        n_acc, n_rej, n_err = len(accepted), len(rejected), len(errors)
+        parts = []
+        if n_acc:
+            parts.append(f"{n_acc} accepted")
+        if n_rej:
+            parts.append(f"{n_rej} rejected")
+        if n_err:
+            parts.append(f"{n_err} error(s)")
+        tried_label = f"{n_tried}/{n_total}" if n_tried < n_total else str(n_total)
+        print(f"  {tried_label} tried: {', '.join(parts) or 'no outcome'}.", file=sys.stderr)
+        if accepted:
+            best = accepted[0].email
+            print(f"  Best guess: {best}", file=sys.stderr)
+        print(file=sys.stderr)
+    else:
+        for r in accepted:
+            print(f"{r.email}  ({r.code} {r.message})")
+    if not accepted:
+        if not args.verbose:
+            print("No accepted address found.", file=sys.stderr)
         return 1
-    for r in results:
-        print(f"{r.email}  ({r.code} {r.message})")
     return 0
 
 
@@ -151,14 +227,14 @@ def main() -> None:
     p_discover.add_argument(
         "--stop-first",
         action="store_true",
-        default=True,
-        help="Stop at first accepted address (default)",
+        default=False,
+        help="Stop at first accepted address",
     )
     p_discover.add_argument(
         "--all",
         dest="stop_first",
         action="store_false",
-        help="Try all candidates and list every accepted address",
+        help="Try all candidates and list every accepted (default)",
     )
     p_discover.add_argument(
         "--delay",

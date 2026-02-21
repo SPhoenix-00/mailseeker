@@ -18,6 +18,6 @@ This project is **Mailseeker**. Use this file to understand goals and constraint
 - **Install**: `pip install -e .` (or `pip install -r requirements.txt` then `pip install -e .`). Dev: `pip install -e ".[dev]"`.
 - **Run**: `mailseeker validate <email>` or `mailseeker discover --first X --last Y --domain Z`. Or `python -m mailseeker` with same subcommands.
 - **Tests**: `pytest tests -v` (from repo root; ensure `src` is on PYTHONPATH, e.g. via editable install).
-- **Config**: No env vars required. Optional CLI flags: `--timeout`, `--mail-from`, `--delay` (discover), `--all` (discover), `--proxy URL` (SOCKS5, e.g. Mullvad; env: `MAILSEEKER_PROXY`). Proxy support needs optional dep: `pip install -e ".[proxy]"`.
+- **Config**: No env vars required. Optional CLI flags: `--timeout`, `--mail-from`, `--delay` (discover), `--stop-first` (discover: stop at first accepted; default is try all), `--proxy URL` (SOCKS5, e.g. Mullvad; env: `MAILSEEKER_PROXY`). Proxy support needs optional dep: `pip install -e ".[proxy]"`.
 
 Update this file as the project evolves so the AI has accurate context.

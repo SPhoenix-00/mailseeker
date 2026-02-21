@@ -10,9 +10,12 @@ from .diagnostics import diagnose_network_block
 from .proxy import create_connection
 
 
+_LOG_INDENT = "  "
+
+
 def _log(verbose: bool, msg: str) -> None:
     if verbose:
-        print(msg, file=sys.stderr)
+        print(f"{_LOG_INDENT}{msg}", file=sys.stderr)
 
 
 def _classify_network_error(err: BaseException) -> str:
@@ -77,7 +80,7 @@ def get_mx_hosts(
     if verbose:
         _log(verbose, f"Found {len(records)} MX host(s):")
         for pref, host in records:
-            _log(verbose, f"  {pref} {host}")
+            _log(verbose, f"  {pref:>5} {host}")
     return records
 
 
@@ -97,7 +100,7 @@ def check_email(
     Connects to the domain's MX, sends MAIL FROM and RCPT TO, and returns
     the server's response (success, code, message). No email is sent.
     """
-    _log(verbose, f"Checking: {email}")
+    _log(verbose, f"Checking {email}")
     email = email.strip().lower()
     if not email or "@" not in email:
         _log(verbose, "  Invalid email format.")
@@ -153,7 +156,7 @@ def check_email(
             attempt_num = attempt + 1
             _log(
                 verbose,
-                f"Connecting to {mx_host}:25 (timeout={timeout}s, attempt {attempt_num}/{attempts_per_host})...",
+                f"Connecting to {mx_host}:25 (attempt {attempt_num}/{attempts_per_host})...",
             )
             try:
                 with smtplib.SMTP(timeout=timeout) as smtp:
@@ -164,17 +167,17 @@ def check_email(
                         smtp._get_greeting()
                     else:
                         smtp.connect(mx_host, 25)
-                    _log(verbose, "  Connected. Sending EHLO...")
+                    _log(verbose, "  EHLO...")
                     smtp.ehlo()
-                    _log(verbose, f"  Sending MAIL FROM: <{mail_from or '<>'}>")
+                    _log(verbose, f"  MAIL FROM: <{mail_from or '<>'}>")
                     smtp.mail(mail_from or "<>")
-                    _log(verbose, f"  Sending RCPT TO: <{email}>")
+                    _log(verbose, f"  RCPT TO:   <{email}>")
                     code, message = smtp.rcpt(email)
                     # Normalize: smtplib may return code as int and message as bytes or str
                     code = int(code)
                     if isinstance(message, bytes):
                         message = message.decode("utf-8", errors="replace")
-                    _log(verbose, f"  Server replied: {code} {message.strip()}")
+                    _log(verbose, f"  Reply:     {code} {message.strip()}")
                     return CheckResult(
                         success=200 <= code < 300,
                         code=code,

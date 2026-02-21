@@ -71,3 +71,24 @@ def test_discover_passes_retry_settings(mock_check):
     assert kwargs["retries"] == 2
     assert kwargs["retry_delay"] == 0.25
     assert kwargs["retry_backoff"] == 1.5
+
+
+@patch("mailseeker.discovery.check_email")
+def test_discover_returns_all_results_when_trying_all(mock_check):
+    """When stop_at_first=False, discover returns a result for every candidate tried."""
+    candidates = email_candidates("A", "B", "x.com")
+    # First succeeds, rest rejected
+    def side_effect(email, **kwargs):
+        return CheckResult(
+            success=(email == candidates[0]),
+            code=250 if email == candidates[0] else 550,
+            message="OK" if email == candidates[0] else "User unknown",
+            email=email,
+        )
+    mock_check.side_effect = side_effect
+
+    results = discover("A", "B", "x.com", stop_at_first=False, verbose=False)
+
+    assert len(results) == len(candidates)
+    assert results[0].success is True
+    assert all(not r.success for r in results[1:])
