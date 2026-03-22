@@ -222,8 +222,11 @@ def check_email(
                     if proxy_url:
                         sock = create_connection(mx_host, 25, timeout=timeout, proxy_url=proxy_url)
                         smtp.sock = sock
-                        smtp.file = sock.makefile("rb")
-                        smtp._get_greeting()
+                        smtp.file = None
+                        code, msg = smtp.getreply()
+                        if code != 220:
+                            smtp.close()
+                            raise smtplib.SMTPConnectError(code, msg)
                     else:
                         smtp.connect(mx_host, 25)
                     _log(verbose, "  EHLO...")
